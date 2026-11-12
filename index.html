@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Tune your waveform to match an endless stream of random transmissions.">
+<title>Signal Lock — Waveform Puzzle</title>
+<style>
+:root{color-scheme:dark;--bg:#101718;--panel:#172021;--line:#303e3c;--muted:#a4b3ad;--lime:#dafa78;--cyan:#79e2d1;--paper:#f4f4e7}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 75% 0%,#1c2a26,transparent 58%),var(--bg);color:var(--paper);font-family:Inter,system-ui,sans-serif}main{max-width:1160px;margin:auto;padding:32px clamp(16px,4vw,48px)}header,.hud,.plothead,.controls h2,.actions,footer,.legend{display:flex;align-items:center;justify-content:space-between;gap:12px}.mono,output,.value{font-family:"IBM Plex Mono",Consolas,monospace}.brand{font-weight:800;letter-spacing:.12em}.brand span{color:var(--lime);margin-right:10px}header{border-bottom:1px solid var(--line);padding-bottom:20px}.muted,small{color:var(--muted)}.intro{padding:26px 0 22px}h1{font-size:clamp(50px,9vw,104px);letter-spacing:-.085em;line-height:.95;margin:0 0 12px}p{line-height:1.55}.intro p{margin:0;color:var(--muted)}.hud{justify-content:flex-start;margin-bottom:14px;gap:12px}.stat{flex:1;background:#141d1d;border:1px solid var(--line);padding:11px 15px;border-radius:8px;min-width:0}.stat small{display:block;letter-spacing:.08em;font-size:10px}.value{display:block;font-size:clamp(15px,2.4vw,22px);margin-top:4px}.value.accent{color:var(--lime)}.deck{display:grid;grid-template-columns:minmax(0,2.2fr) minmax(260px,1fr);gap:14px}.panel{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:18px}.plothead{flex-wrap:wrap}h2{font-size:14px;margin:0}.legend{font-size:11px;color:var(--muted);justify-content:flex-start}.legend span:before{content:"";display:inline-block;width:16px;vertical-align:middle;margin-right:5px;border-top:2px solid var(--lime)}.legend span:first-child:before{border-top:2px dashed var(--cyan)}canvas{width:100%;height:clamp(205px,32vw,340px);display:block;margin:14px 0 10px;border:1px solid #293a36;border-radius:6px;background:#101818}.plotfoot{font-size:11px;color:var(--muted);letter-spacing:.06em}.control{display:block;margin-top:16px}.control span{display:flex;justify-content:space-between;gap:8px;font-size:13px}.control output{color:var(--lime)}input[type=range]{width:100%;margin:8px 0 0;accent-color:var(--lime);cursor:pointer}button{font:inherit;cursor:pointer;border:1px solid var(--line);border-radius:6px;padding:9px 12px;background:#202c29;color:var(--paper);font-size:13px;font-weight:700}button:hover:not(:disabled){filter:brightness(1.18)}button:focus-visible,input:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}button:disabled{opacity:.5;cursor:default}.primary{background:var(--lime);color:#172011;flex:1}.actions{margin-top:16px}.status{margin:12px 0 0;min-height:3em;font-size:12px;color:var(--muted)}footer{margin-top:18px;font-size:11px;color:var(--muted);flex-wrap:wrap}[hidden]{display:none!important}
+@media(max-width:720px){.deck{grid-template-columns:1fr}.intro{padding-top:23px}.panel{padding:14px}}
+</style>
+<main>
+<header><div class="brand mono"><span>∿</span>SIGNAL LOCK</div><button id="restart" type="button">Restart</button></header>
+<section class="intro"><h1>Signal Lock<span style="color:var(--lime)">.</span></h1><p>Tune your waveform to match the incoming signal. Every lock leads to a new random transmission.</p></section>
+<div class="hud mono">
+<div class="stat"><small>TRANSMISSION</small><strong class="value" id="round"></strong></div>
+<div class="stat"><small>SIMILARITY</small><strong class="value accent" id="score"></strong></div>
+<div class="stat"><small>LOCKS</small><strong class="value" id="locks"></strong></div>
+</div>
+<div class="deck">
+<section class="panel"><div class="plothead"><h2>Oscilloscope</h2><div class="legend"><span>Incoming</span><span>Your signal</span></div></div>
+<canvas id="scope" role="img" aria-label="Incoming and tuned waveforms over one second"></canvas>
+<div class="plotfoot mono">0 s <span style="float:right">1 s</span></div></section>
+<section class="panel controls"><h2>Tuning controls</h2>
+<label class="control"><span>Frequency <output id="freqOut" for="freq"></output></span><input id="freq" type="range" min="1" max="5" step=".25" value="2"></label>
+<label class="control"><span>Amplitude <output id="ampOut" for="amp"></output></span><input id="amp" type="range" min=".25" max="1.5" step=".05" value=".65"></label>
+<label class="control"><span>Phase <output id="phaseOut" for="phase"></output></span><input id="phase" type="range" min="-180" max="180" step="15" value="0"></label>
+<div class="actions"><button type="button" id="hint">Hint</button><button type="button" class="primary" id="lock">Lock signal</button></div>
+<p class="status" id="status" role="status"></p></section>
+</div>
+<footer>Focus a slider and use the arrow keys for fine tuning.</footer>
+</main>
+<script>
+"use strict";
+const byId = id => document.getElementById(id);
+const controls = ["freq", "amp", "phase"].map(byId);
+const initialTuning = controls.map(control => Number(control.defaultValue));
+const canvas = byId("scope");
+const ctx = canvas.getContext("2d");
+const lock = byId("lock");
+const hint = byId("hint");
+const status = byId("status");
+const format = [
+  value => value.toFixed(2) + " Hz",
+  value => value.toFixed(2),
+  value => value + "°"
+];
+let round = 1;
+let target;
+let locked = false;
+let similarity = 0;
+let hints = 0;
+const instructions = "Reach 96% similarity, then lock the signal.";
+const tuningLabels = ["Frequency", "Amplitude", "Phase"];
+const wave = ([frequency, amplitude, phase], time) =>
+  amplitude * Math.sin(2 * Math.PI * frequency * time + phase * Math.PI / 180);
+
+function randomSignal(previous) {
+  let signal;
+  do {
+    signal = controls.map(control => {
+      const min = Number(control.min);
+      const step = Number(control.step);
+      // The two phase endpoints represent the same angle.
+      const count = Math.round((Number(control.max) - min) / step)
+        + Number(control.id !== "phase");
+      return Number((min + step * Math.floor(Math.random() * count)).toFixed(2));
+    });
+  } while ([previous, initialTuning].some(values =>
+    values && values.every((value, position) => value === signal[position])
+  ));
+  return signal;
+}
+
+function draw(target, tuning) {
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.round(width * ratio);
+  canvas.height = Math.round(height * ratio);
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.strokeStyle = "#263734";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let column = 0; column <= 16; column++) {
+    const x = width * column / 16;
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, height);
+  }
+  for (let row = 0; row <= 8; row++) {
+    const y = height * row / 8;
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+  }
+  ctx.stroke();
+  for (const [signal, color, dash, weight] of [
+    [tuning, "#dafa78", [], 2.5],
+    [target, "#79e2d1", [6, 5], 1.8]
+  ]) {
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = weight;
+    ctx.setLineDash(dash);
+    for (let point = 0; point <= 480; point++) {
+      const time = point / 480;
+      ctx.lineTo(time * width, height * (.5 - wave(signal, time) * .28));
+    }
+    ctx.stroke();
+  }
+}
+
+function render() {
+  const tuning = controls.map(control => Number(control.value));
+  let error = 0;
+  let referenceEnergy = 0;
+  for (let sample = 0; sample < 240; sample++) {
+    const time = sample / 240;
+    const incoming = wave(target, time);
+    error += (incoming - wave(tuning, time)) ** 2;
+    referenceEnergy += incoming ** 2;
+  }
+  similarity = Math.max(0, Math.round(100 * (1 - Math.sqrt(error / referenceEnergy))));
+  controls.forEach((control, position) => {
+    byId(control.id + "Out").textContent = format[position](tuning[position]);
+    control.disabled = locked;
+  });
+  byId("round").textContent = round;
+  byId("score").textContent = similarity + "%";
+  byId("locks").textContent = round - 1 + Number(locked);
+  hint.disabled = locked || hints === controls.length;
+  lock.textContent = locked ? "Next signal" : "Lock signal";
+  draw(target, tuning);
+}
+
+function loadRound(nextRound) {
+  round = nextRound;
+  target = randomSignal(target);
+  locked = false;
+  hints = 0;
+  controls.forEach((control, position) => { control.value = initialTuning[position]; });
+  status.textContent = instructions;
+  render();
+}
+
+function showTuningHelp() {
+  status.textContent = hints === 0 ? instructions : tuningLabels.slice(0, hints)
+    .map((label, position) => label + " " + format[position](target[position]))
+    .join(" · ");
+}
+
+controls.forEach(control => control.addEventListener("input", () => {
+  showTuningHelp();
+  render();
+}));
+hint.addEventListener("click", () => {
+  hints++;
+  showTuningHelp();
+  render();
+});
+lock.addEventListener("click", () => {
+  if (locked) {
+    loadRound(round + 1);
+    controls[0].focus();
+    return;
+  }
+  if (similarity < 96) {
+    status.textContent = "Lock failed at " + similarity + "%. Keep tuning to reach 96%.";
+    return;
+  }
+  locked = true;
+  status.textContent = "Transmission recovered.";
+  render();
+});
+byId("restart").addEventListener("click", () => loadRound(1));
+new ResizeObserver(render).observe(canvas);
+loadRound(1);
+</script>
+</html>
